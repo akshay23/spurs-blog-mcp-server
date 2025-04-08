@@ -11,11 +11,11 @@ from bs4 import BeautifulSoup
 import json
 
 # Initialize FastMCP server
-mcp = FastMCP("SpursBlog")
+mcp = FastMCP("Spurs Blog Assistant")
 
 # Constants
 PTR_RSS_URL = "https://www.poundingtherock.com/rss/current.xml"
-USER_AGENT = "MCP SpursBlog Server/1.0"
+USER_AGENT = "spurs-blog-assistant/1.0"
 
 # Cache to store fetched data
 article_cache = {}
@@ -67,19 +67,38 @@ async def fetch_and_parse_rss():
             
             # Parse the XML
             root = ET.fromstring(response.text)
-            
-            # Extract channel items (articles)
+            namespace = {'atom': 'http://www.w3.org/2005/Atom'}
             articles = []
-            for item in root.findall('.//item'):
-                title = item.find('title').text
-                link = item.find('link').text
-                description = item.find('description').text
-                pub_date = item.find('pubDate').text
-                guid = item.find('guid').text
+            
+            # Process Atom feed (entries instead of items)
+            for entry in root.findall('.//atom:entry', namespace) or root.findall('.//entry'):
+                # Get title
+                title_elem = entry.find('.//atom:title', namespace) or entry.find('title')
+                title = title_elem.text if title_elem is not None else "No Title"
                 
-                # Extract full content if available
-                content_encoded = item.find('.//{http://purl.org/rss/1.0/modules/content/}encoded')
-                content = content_encoded.text if content_encoded is not None else None
+                # Get link (may be in different formats in Atom)
+                link = None
+                link_elem = entry.find('.//atom:link[@rel="alternate"][@type="text/html"]', namespace) or entry.find('link[@rel="alternate"]')
+                if link_elem is not None:
+                    link = link_elem.get('href')
+                
+                # Get description/content
+                content_elem = entry.find('.//atom:content', namespace) or entry.find('content')
+                description = content_elem.text if content_elem is not None and content_elem.text else ""
+                
+                # If content has HTML type, use the content directly
+                if content_elem is not None and content_elem.get('type') == 'html':
+                    content = content_elem.text
+                else:
+                    content = description
+                
+                # Get publication date
+                pub_date_elem = entry.find('.//atom:published', namespace) or entry.find('published') or entry.find('.//atom:updated', namespace) or entry.find('updated')
+                pub_date = pub_date_elem.text if pub_date_elem is not None else ""
+                
+                # Get ID
+                id_elem = entry.find('.//atom:id', namespace) or entry.find('id')
+                guid = id_elem.text if id_elem is not None else link
                 
                 article = Article(
                     title=title,
@@ -95,12 +114,13 @@ async def fetch_and_parse_rss():
             article_cache = articles
             last_fetch_time = current_time
             
+            print(f"Successfully parsed feed, found {len(articles)} articles")
             return articles
             
         except Exception as e:
-            print(f"Error fetching RSS feed: {e}")
-            # Return cached data if available, otherwise empty list
-            return article_cache if article_cache else []
+            if article_cache:
+                return article_cache
+            raise Exception(f"Error fetching RSS feed: {e}")
 
 async def extract_player_info(articles: List[Article]):
     """Extract player information from articles."""
@@ -369,6 +389,10 @@ Recent Mentions:{mentions_text}
 async def get_recent_results() -> str:
     """Get recent San Antonio Spurs game results from articles."""
     articles = await fetch_and_parse_rss()
+
+    if not articles:
+        return "No blog articles found."
+
     game_results = await extract_game_results(articles)
     
     if not game_results:
@@ -466,4 +490,4 @@ Please use the NBA official website to find the latest news related to:
 # Run the server
 if __name__ == "__main__":
     # Initialize and run the server
-    mcp.run()
+    mcp.run(transport='stdio')
