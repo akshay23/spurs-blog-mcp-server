@@ -1,0 +1,12 @@
+[project]
+name = "spurs-blog-mcp-server"
+version = "0.1.0"
+description = "An MCP server for the Pounding The Rock blog for everything San Antonio Spurs"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.13.3",
+    "bs4>=0.0.2",
+    "httpx>=0.28.1",
+    "mcp[cli]>=1.6.0",
+]
