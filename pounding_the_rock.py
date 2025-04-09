@@ -6,10 +6,8 @@ import re
 import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-import asyncio
 from bs4 import BeautifulSoup
-import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 # Initialize FastMCP server
 mcp = FastMCP("Spurs Blog Assistant")
@@ -169,6 +167,73 @@ async def extract_game_results(articles: List[Article]):
     """Extract game results from articles."""
     global game_results_cache
     
+    # NBA teams list for better team name matching
+    nba_teams = [
+        "76ers",
+        "Bucks",
+        "Bulls",
+        "Cavaliers",
+        "Celtics",
+        "Clippers",
+        "Grizzlies",
+        "Hawks",
+        "Heat",
+        "Hornets",
+        "Jazz",
+        "Kings",
+        "Knicks",
+        "Lakers",
+        "Magic",
+        "Mavericks",
+        "Nets",
+        "Nuggets",
+        "Pacers",
+        "Pelicans",
+        "Pistons",
+        "Raptors",
+        "Rockets",
+        "Spurs",
+        "Suns",
+        "Thunder",
+        "Timberwolves",
+        "Trail Blazers",
+        "Warriors",
+        "Wizards"
+    ]
+    
+    # Team cities mapping to help with city/team name resolution
+    team_cities = {
+        "Philadelphia": "76ers",
+        "Milwaukee": "Bucks",
+        "Chicago": "Bulls",
+        "Cleveland": "Cavaliers",
+        "Boston": "Celtics",
+        "Los Angeles": ["Clippers", "Lakers"],  # Multiple teams in LA
+        "Memphis": "Grizzlies",
+        "Atlanta": "Hawks",
+        "Miami": "Heat",
+        "Charlotte": "Hornets",
+        "Utah": "Jazz",
+        "Sacramento": "Kings",
+        "New York": "Knicks",
+        "Orlando": "Magic",
+        "Dallas": "Mavericks",
+        "Brooklyn": "Nets",
+        "Denver": "Nuggets",
+        "Indiana": "Pacers",
+        "New Orleans": "Pelicans",
+        "Detroit": "Pistons",
+        "Toronto": "Raptors",
+        "Houston": "Rockets",
+        "San Antonio": "Spurs",
+        "Phoenix": "Suns",
+        "Oklahoma City": "Thunder",
+        "Minnesota": "Timberwolves",
+        "Portland": "Trail Blazers",
+        "Golden State": "Warriors",
+        "Washington": "Wizards"
+    }
+    
     # Check if cache is fresh
     current_time = datetime.datetime.now()
     if last_fetch_time and (current_time - last_fetch_time) < CACHE_DURATION and game_results_cache:
@@ -176,71 +241,206 @@ async def extract_game_results(articles: List[Article]):
     
     game_results = []
     
-    # Look for game recap articles
-    game_recap_keywords = ["recap", "final score", "defeat", "win", "lose", "fall to", "game thread"]
+    # Look for game recap articles - expanded keywords list
+    game_recap_keywords = ["recap", "final score", "defeat", "win", "lose", "loss", "fall", "beat", 
+                           "game thread", "vs", "versus", "against", "victory", "down", "outlast"]
     
     for article in articles:
         # Check if this is likely a game recap
         is_recap = any(keyword in article.title.lower() for keyword in game_recap_keywords)
         
         if is_recap:
-            # Try to extract game information
+            # Initialize game information
             opponent = None
             score = None
             result = None
             location = None
+            spurs_score = None
+            opponent_score = None
             
-            # Use regex to find scores like "Spurs 120, Lakers 110" or "Lakers 110, Spurs 120"
-            score_pattern = r'(?:Spurs|San Antonio)\s+(\d+)[,\s]+(\w+)\s+(\d+)|(\w+)\s+(\d+)[,\s]+(?:Spurs|San Antonio)\s+(\d+)'
             content = article.content if article.content else article.description
+            title = article.title
+            
             if content:
                 soup = BeautifulSoup(content, 'html.parser')
-                text = soup.get_text()
+                text = soup.get_text() + " " + title  # Combine content and title for better matching
                 
-                # Try to extract opponent and score
-                score_match = re.search(score_pattern, text)
-                if score_match:
-                    groups = score_match.groups()
-                    if groups[0]:  # Format: "Spurs 120, Lakers 110"
-                        spurs_score = int(groups[0])
-                        opponent = groups[1]
-                        opponent_score = int(groups[2])
-                    else:  # Format: "Lakers 110, Spurs 120"
-                        opponent = groups[3]
-                        opponent_score = int(groups[4])
-                        spurs_score = int(groups[5])
+                # Pattern 1: Direct score mentions - "Spurs 120, Lakers 110" or "Lakers 110, Spurs 120"
+                pattern1 = r'(?:Spurs|San Antonio)\s+(\d+)[,\s]+(\w+(?:\s+\w+)?)\s+(\d+)|(\w+(?:\s+\w+)?)\s+(\d+)[,\s]+(?:Spurs|San Antonio)\s+(\d+)'
+                
+                # Pattern 2: Final score mentions - "Final Score: Clippers 122-117 Spurs" or similar
+                pattern2 = r'[Ff]inal\s+[Ss]core:?\s+(?:(\w+(?:\s+\w+)?)\s+(\d+)[-–]\s*(\d+)\s+(?:Spurs|San Antonio)|(?:Spurs|San Antonio)\s+(\d+)[-–]\s*(\d+)\s+(\w+(?:\s+\w+)?))'
+                
+                # Pattern 3: Win/loss statements - "Clippers to a 122-117 win over the Spurs"
+                pattern3 = r'(\w+(?:\s+\w+)?)\s+to\s+a\s+(\d+)[-–]\s*(\d+)\s+win\s+(?:\w+\s+){0,2}(?:over|against)\s+(?:the\s+)?(?:Spurs|San Antonio)'
+                
+                # Pattern 4: Score in title with team names - "Spurs vs. Clippers: 117-122"
+                pattern4 = r'(?:Spurs|San Antonio)\s+(?:vs\.?|versus|@|at)\s+(\w+(?:\s+\w+)?)[^0-9]*(\d+)[-–]\s*(\d+)|(\w+(?:\s+\w+)?)\s+(?:vs\.?|versus|@|at)\s+(?:Spurs|San Antonio)[^0-9]*(\d+)[-–]\s*(\d+)'
+                
+                # Try all patterns
+                matched = False
+                for pattern_num, pattern in enumerate([pattern1, pattern2, pattern3, pattern4], 1):
+                    score_match = re.search(pattern, text, re.IGNORECASE)
+                    if score_match:
+                        groups = score_match.groups()
+                        if pattern_num == 1:  # Direct score format
+                            if groups[0]:  # Format: "Spurs 120, Lakers 110"
+                                spurs_score = int(groups[0])
+                                opponent_raw = groups[1].strip()
+                                opponent_score = int(groups[2])
+                            else:  # Format: "Lakers 110, Spurs 120"
+                                opponent_raw = groups[3].strip()
+                                opponent_score = int(groups[4])
+                                spurs_score = int(groups[5])
+                            
+                            # Normalize opponent name using NBA teams list
+                            opponent = normalize_team_name(opponent_raw, nba_teams, team_cities)
+                        
+                        elif pattern_num == 2:  # Final score format
+                            if groups[0]:  # Format: "Final Score: Clippers 122-117 Spurs"
+                                opponent_raw = groups[0].strip()
+                                opponent_score = int(groups[1])
+                                spurs_score = int(groups[2])
+                            else:  # Format: "Final Score: Spurs 117-122 Clippers"
+                                spurs_score = int(groups[3])
+                                opponent_score = int(groups[4])
+                                opponent_raw = groups[5].strip()
+                            
+                            # Normalize opponent name
+                            opponent = normalize_team_name(opponent_raw, nba_teams, team_cities)
+                        
+                        elif pattern_num == 3:  # Win statement format
+                            # Format: "Clippers to a 122-117 win over the Spurs"
+                            opponent_raw = groups[0].strip()
+                            opponent_score = int(groups[1])
+                            spurs_score = int(groups[2])
+                            
+                            # Normalize opponent name
+                            opponent = normalize_team_name(opponent_raw, nba_teams, team_cities)
+                        
+                        elif pattern_num == 4:  # Title with score format
+                            if groups[0]:  # Format: "Spurs vs. Clippers: 117-122"
+                                opponent_raw = groups[0].strip()
+                                # Determine which score belongs to which team based on context
+                                score1, score2 = int(groups[1]), int(groups[2])
+                                if "win" in text.lower() and "spurs win" in text.lower():
+                                    spurs_score, opponent_score = max(score1, score2), min(score1, score2)
+                                elif "loss" in text.lower() and "spurs loss" in text.lower():
+                                    spurs_score, opponent_score = min(score1, score2), max(score1, score2)
+                                else:
+                                    # If no clear indicator, assume first number is Spurs
+                                    spurs_score, opponent_score = score1, score2
+                            else:  # Format: "Clippers vs. Spurs: 122-117"
+                                opponent_raw = groups[3].strip()
+                                # Same logic as above
+                                score1, score2 = int(groups[4]), int(groups[5])
+                                if "win" in text.lower() and "spurs win" in text.lower():
+                                    spurs_score, opponent_score = max(score1, score2), min(score1, score2)
+                                elif "loss" in text.lower() and "spurs loss" in text.lower():
+                                    spurs_score, opponent_score = min(score1, score2), max(score1, score2)
+                                else:
+                                    # If no clear indicator, assume second number is Spurs
+                                    opponent_score, spurs_score = score1, score2
+                            
+                            # Normalize opponent name
+                            opponent = normalize_team_name(opponent_raw, nba_teams, team_cities)
+                        
+                        matched = True
+                        break
+                
+                # If we didn't match a score pattern, try to infer result from keywords
+                if not matched:
+                    # Try to find opponent by scanning for NBA team names in the text
+                    for team in nba_teams:
+                        if team != "Spurs" and team.lower() in text.lower():
+                            opponent = team
+                            break
                     
+                    # If still no opponent, try to extract from city names
+                    if not opponent:
+                        for city, team in team_cities.items():
+                            if city != "San Antonio" and city.lower() in text.lower():
+                                # Handle Los Angeles special case
+                                if isinstance(team, list):
+                                    # If both LA teams are mentioned, use the one that appears more
+                                    if all(t.lower() in text.lower() for t in team):
+                                        # Count occurrences to determine which LA team
+                                        team_counts = {t: text.lower().count(t.lower()) for t in team}
+                                        opponent = max(team_counts.items(), key=lambda x: x[1])[0]
+                                    # If only one LA team is mentioned, use that one
+                                    elif any(t.lower() in text.lower() for t in team):
+                                        for t in team:
+                                            if t.lower() in text.lower():
+                                                opponent = t
+                                                break
+                                    # Default to first team if no clear match
+                                    else:
+                                        opponent = team[0]
+                                else:
+                                    opponent = team
+                                break
+                    
+                    # Try to extract teams from "vs" format
+                    if not opponent:
+                        teams_pattern = r'(?:Spurs|San Antonio)\s+(?:vs\.?|versus|against|at|@)\s+(\w+(?:\s+\w+)?)|(\w+(?:\s+\w+)?)\s+(?:vs\.?|versus|against|at|@)\s+(?:Spurs|San Antonio)'
+                        teams_match = re.search(teams_pattern, text, re.IGNORECASE)
+                        if teams_match:
+                            groups = teams_match.groups()
+                            opponent_raw = next((g for g in groups if g), None)
+                            if opponent_raw:
+                                opponent = normalize_team_name(opponent_raw.strip(), nba_teams, team_cities)
+                    
+                    # Try to infer result from text
+                    spurs_win_indicators = ["spurs win", "spurs defeat", "spurs beat", "spurs down", 
+                                           "san antonio win", "san antonio defeat", "san antonio beat"]
+                    spurs_loss_indicators = ["spurs lose", "spurs fall", "spurs lost", "defeated by", 
+                                            "beaten by", "fall to", "lose to", "win over spurs", 
+                                            "victory over spurs", "over the spurs"]
+                    
+                    text_lower = text.lower()
+                    if any(indicator in text_lower for indicator in spurs_win_indicators):
+                        result = "Win"
+                    elif any(indicator in text_lower for indicator in spurs_loss_indicators):
+                        result = "Loss"
+                
+                # If we have scores, set the result based on those
+                if spurs_score is not None and opponent_score is not None:
                     score = f"Spurs {spurs_score}, {opponent} {opponent_score}"
                     result = "Win" if spurs_score > opponent_score else "Loss"
-                else:
-                    # Try to infer from title
-                    title_parts = article.title.split()
-                    for i, part in enumerate(title_parts):
-                        if part.lower() in ["defeat", "beat", "over", "down"]:
-                            if "spurs" in article.title.lower():
-                                if i > 0 and "spurs" in title_parts[i-1].lower():
-                                    result = "Win"
-                                else:
-                                    result = "Loss"
-                            break
-                        elif part.lower() in ["fall", "lose", "lost"]:
-                            result = "Loss"
-                            break
                 
-                # Try to extract location (home/away)
-                location_patterns = [r'at home', r'on the road', r'in San Antonio', r'away']
+                # Extract location (home/away)
+                location_patterns = [
+                    r'(?:played|playing|game)\s+at\s+home', 
+                    r'(?:played|playing|game)\s+on\s+the\s+road', 
+                    r'in\s+San\s+Antonio', 
+                    r'at\s+the\s+(?:AT&T|Frost\s+Bank)\s+Center',
+                    r'away\s+game',
+                    r'host(?:s|ing|ed)\s+the',
+                    r'visit(?:s|ing|ed)\s+the'
+                ]
+                
                 for pattern in location_patterns:
                     location_match = re.search(pattern, text, re.IGNORECASE)
                     if location_match:
                         location_text = location_match.group(0).lower()
-                        if any(loc in location_text for loc in ['at home', 'in san antonio']):
+                        if any(loc in location_text for loc in ['at home', 'in san antonio', 'at the', 'host']):
                             location = "Home"
                         else:
                             location = "Away"
                         break
+                
+                # If location still not determined, try to infer from "vs" or "@" format
+                if not location and opponent:
+                    vs_pattern = r'(?:Spurs|San Antonio)\s+@\s+' + re.escape(opponent)
+                    at_pattern = r'' + re.escape(opponent) + r'\s+@\s+(?:Spurs|San Antonio)'
+                    
+                    if re.search(vs_pattern, text, re.IGNORECASE):
+                        location = "Away"
+                    elif re.search(at_pattern, text, re.IGNORECASE):
+                        location = "Home"
             
             # If we have enough information, add to results
-            if result or score or opponent:
+            if result and score:
                 game_results.append(GameResult(
                     date=article.pub_date,
                     opponent=opponent if opponent else "Unknown",
@@ -253,6 +453,28 @@ async def extract_game_results(articles: List[Article]):
     game_results_cache = game_results
     
     return game_results
+
+def normalize_team_name(raw_name: str, nba_teams: List[str], team_cities: Dict[str, Union[str, List[str]]]) -> str:
+    """Normalize a team name by matching it to official NBA team names."""
+    if not raw_name:
+        return "Unknown"
+    
+    # Direct match with team name
+    for team in nba_teams:
+        if team.lower() == raw_name.lower() or team.lower() in raw_name.lower():
+            return team
+    
+    # Match with city name
+    for city, team in team_cities.items():
+        if city.lower() == raw_name.lower() or city.lower() in raw_name.lower():
+            # Handle the Los Angeles special case
+            if isinstance(team, list):
+                # Default to the first team unless more info
+                return team[0]
+            return team
+    
+    # If no match found, return the original
+    return raw_name
 
 # Define MCP resources
 @mcp.resource("articles://latest")
