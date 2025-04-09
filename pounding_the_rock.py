@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import asyncio
 from bs4 import BeautifulSoup
 import json
+from typing import Optional, Dict, Any, List
 
 # Initialize FastMCP server
 mcp = FastMCP("Spurs Blog Assistant")
@@ -67,48 +68,29 @@ async def fetch_and_parse_rss():
             
             # Parse the XML
             root = ET.fromstring(response.text)
-            namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
             articles = []
             
             # Process Atom feed (entries instead of items)
-            for entry in root.findall('.//atom:entry', namespace) or root.findall('.//entry'):
-                # Get title
-                title_elem = entry.find('.//atom:title', namespace) or entry.find('title')
-                title = title_elem.text if title_elem is not None else "No Title"
+            for entry in root.findall('atom:entry', ns):
+                title = entry.find('atom:title', ns).text if entry.find('atom:title', ns) is not None else ""
+                link_el = entry.find("atom:link[@rel='alternate']", ns)
+                link = link_el.attrib['href'] if link_el is not None else ""
+                pub_date = entry.find('atom:published', ns).text if entry.find('atom:published', ns) is not None else ""
+                guid = entry.find('atom:id', ns).text if entry.find('atom:id', ns) is not None else ""
+                content = entry.find('atom:content', ns).text if entry.find('atom:content', ns) is not None else ""
                 
-                # Get link (may be in different formats in Atom)
-                link = None
-                link_elem = entry.find('.//atom:link[@rel="alternate"][@type="text/html"]', namespace) or entry.find('link[@rel="alternate"]')
-                if link_elem is not None:
-                    link = link_elem.get('href')
+                # Generate a brief description by truncating plain text
+                description = content[:200] + '...' if content else ""
                 
-                # Get description/content
-                content_elem = entry.find('.//atom:content', namespace) or entry.find('content')
-                description = content_elem.text if content_elem is not None and content_elem.text else ""
-                
-                # If content has HTML type, use the content directly
-                if content_elem is not None and content_elem.get('type') == 'html':
-                    content = content_elem.text
-                else:
-                    content = description
-                
-                # Get publication date
-                pub_date_elem = entry.find('.//atom:published', namespace) or entry.find('published') or entry.find('.//atom:updated', namespace) or entry.find('updated')
-                pub_date = pub_date_elem.text if pub_date_elem is not None else ""
-                
-                # Get ID
-                id_elem = entry.find('.//atom:id', namespace) or entry.find('id')
-                guid = id_elem.text if id_elem is not None else link
-                
-                article = Article(
+                articles.append(Article(
                     title=title,
                     link=link,
                     description=description,
                     pub_date=pub_date,
                     guid=guid,
                     content=content
-                )
-                articles.append(article)
+                ))
             
             # Update cache
             article_cache = articles
@@ -116,7 +98,6 @@ async def fetch_and_parse_rss():
             
             print(f"Successfully parsed feed, found {len(articles)} articles")
             return articles
-            
         except Exception as e:
             if article_cache:
                 return article_cache
