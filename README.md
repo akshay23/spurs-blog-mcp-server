@@ -99,6 +99,34 @@ Copy and paste the following JSON into the configuration file:
 3. **Verify connection**: Look for the 🔨 hammer icon in the bottom right of the chat interface, indicating available tools
 </details>
 
+## 🧰 Available Tools
+
+<div align="center">
+  <table>
+    <tr>
+      <th>Tool</th>
+      <th>Description</th>
+    </tr>
+    <tr>
+      <td><code>get_player_info(player_name)</code></td>
+      <td>Get latest stats and performance info for specific Spurs playe.r</td>
+    </tr>
+    <tr>
+      <td><code>get_recent_results</code></td>
+      <td>Get latest scores and results.</td>
+    </tr>
+    </table>
+    </div>
+
+## 💬 Example Queries
+
+<details open>
+<summary><b>Basic Queries</b></summary>
+
+- "Tell me how the Spurs did in their game last night"
+- "Can you tell how Stephon Castle performed the few games"
+</details>
+
 ## 👥 Contributing
 
 Contributions are welcome! Feel free to submit pull requests or open issues if you have suggestions for improvements.
