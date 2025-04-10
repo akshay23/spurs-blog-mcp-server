@@ -110,7 +110,7 @@ async def extract_player_info(articles: List[Article]):
     if last_fetch_time and (current_time - last_fetch_time) < CACHE_DURATION and player_stats_cache:
         return player_stats_cache
     
-    # Spurs players to look for
+    # Spurs players to look for with full names
     spurs_players = [
         "Victor Wembanyama", "Wemby", "Devin Vassell", "Jeremy Sochan", 
         "Keldon Johnson", "Tre Jones", "Julian Champagnie", "Zach Collins",
@@ -118,7 +118,29 @@ async def extract_player_info(articles: List[Article]):
         "Charles Bassey", "Harrison Barnes", "Stephon Castle", "Chris Paul", "CP3"
     ]
     
-    player_data = {}
+    # Create a mapping of last names to full names
+    last_name_mapping = {}
+    for player in spurs_players:
+        if player in ["Wemby", "CP3"]:  # Skip nicknames
+            continue
+        
+        # Split the name and use last name as key
+        name_parts = player.split()
+        if len(name_parts) >= 2:  # Make sure we have at least first and last name
+            last_name = name_parts[-1]
+            last_name_mapping[last_name.lower()] = player
+    
+    # Add special mappings for nicknames
+    nickname_mapping = {
+        "wemby": "Victor Wembanyama",
+        "cp3": "Chris Paul"
+    }
+    
+    # Combine all name variations into a single search dictionary
+    name_variations = {**last_name_mapping, **nickname_mapping}
+    
+    # Use a dictionary for intermediate processing
+    player_mentions_dict = {}
     
     # Extract mentions of players in articles
     for article in articles:
@@ -130,38 +152,73 @@ async def extract_player_info(articles: List[Article]):
         soup = BeautifulSoup(content, 'html.parser')
         plain_text = soup.get_text()
         
+        # First check for full names
         for player in spurs_players:
-            # Look for mentions of the player (case insensitive)
-            if re.search(rf'\b{re.escape(player)}\b', plain_text, re.IGNORECASE):
-                # Find sentences containing the player name
-                sentences = re.split(r'(?<=[.!?])\s+', plain_text)
-                player_mentions = []
+            if player not in ["Wemby", "CP3"]:  # Skip nicknames here, we'll handle them separately
+                if re.search(rf'\b{re.escape(player)}\b', plain_text, re.IGNORECASE):
+                    process_player_mention(player, plain_text, article, player_mentions_dict)
+        
+        # Then check for last names and nicknames
+        processed_names = set()  # Track which names we've already processed
+        for variation, full_name in name_variations.items():
+            # Skip if we've already found this player via their full name
+            if full_name in processed_names:
+                continue
                 
-                for sentence in sentences:
-                    if re.search(rf'\b{re.escape(player)}\b', sentence, re.IGNORECASE):
-                        player_mentions.append({
-                            "text": sentence.strip(),
-                            "article_title": article.title,
-                            "article_link": article.link
-                        })
-                
-                # Normalize player names (e.g., "Wemby" -> "Victor Wembanyama")
-                normalized_name = player
-                if player == "Wemby":
-                    normalized_name = "Victor Wembanyama"
-                elif player == "CP3":
-                    normalized_name = "Chris Paul"
-                
-                # Add or update player information
-                if normalized_name not in player_data:
-                    return f"Player '{normalized_name}' not found in recent articles. Try another player name."
-                else:
-                    player_data[normalized_name]["mentions"].extend(player_mentions)
+            # Check for this variation
+            if re.search(rf'\b{re.escape(variation)}\b', plain_text, re.IGNORECASE):
+                process_player_mention(full_name, plain_text, article, player_mentions_dict, search_term=variation)
+                processed_names.add(full_name)
+    
+    # Convert dictionary to PlayerInfo objects
+    player_info_objects = {}
+    for player_name, data in player_mentions_dict.items():
+        # Initialize with empty stats if none exist
+        stats = data.get("stats", {})
+        player_info_objects[player_name] = PlayerInfo(
+            name=player_name,
+            stats=stats,
+            mentions=data["mentions"]
+        )
     
     # Update cache
-    player_stats_cache = player_data
+    player_stats_cache = player_info_objects
     
-    return player_data
+    return player_info_objects
+
+def process_player_mention(player, plain_text, article, player_mentions_dict, search_term=None):
+    """Helper function to process player mentions in text.
+    
+    Args:
+        player: The full/normalized player name
+        plain_text: The article text to search
+        article: The article object
+        player_mentions_dict: Dictionary to collect mentions before converting to PlayerInfo
+        search_term: Optional specific term to search for (e.g., nickname or last name)
+    """
+    # Find sentences containing the player reference
+    sentences = re.split(r'(?<=[.!?])\s+', plain_text)
+    player_mentions = []
+    
+    # Determine what term to search for in the sentences
+    if search_term:
+        term_to_search = search_term
+    else:
+        term_to_search = player
+    
+    for sentence in sentences:
+        if re.search(rf'\b{re.escape(term_to_search)}\b', sentence, re.IGNORECASE):
+            player_mentions.append({
+                "text": sentence.strip(),
+                "article_title": article.title,
+                "article_link": article.link
+            })
+    
+    # Add or update player information in the dictionary
+    if player not in player_mentions_dict:
+        player_mentions_dict[player] = {"mentions": player_mentions, "stats": {}}
+    else:
+        player_mentions_dict[player]["mentions"].extend(player_mentions)
 
 async def extract_game_results(articles: List[Article]):
     """Extract game results from articles."""
@@ -569,12 +626,12 @@ async def get_player_info(player_name: str) -> str:
     
     player_info = player_data[matched_player]
     
-    # Format player stats
-    stats = player_info["stats"]
+    # Format player stats - use attribute access instead of dictionary access
+    stats = player_info.stats
     stats_text = "\n".join([f"{key}: {value}" for key, value in stats.items()])
     
-    # Format player mentions
-    mentions = player_info["mentions"]
+    # Format player mentions - use attribute access instead of dictionary access
+    mentions = player_info.mentions
     mentions_text = ""
     for i, mention in enumerate(mentions[:5], 1):  # Limit to 5 mentions
         mentions_text += f"\n{i}. \"{mention['text']}\" - {mention['article_title']}"
@@ -615,36 +672,6 @@ Location: {game.location}
         """
     
     return f"Recent Spurs Game Results:\n{results_text}"
-
-@mcp.tool()
-async def search_articles(keyword: str) -> str:
-    """Search for articles containing a specific keyword.
-    
-    Args:
-        keyword: The keyword to search for in article titles and content
-    """
-    articles = await fetch_and_parse_rss()
-    
-    matching_articles = []
-    for article in articles:
-        content = article.content if article.content else article.description
-        if re.search(rf'\b{re.escape(keyword)}\b', article.title + content, re.IGNORECASE):
-            matching_articles.append(article)
-    
-    if not matching_articles:
-        return f"No articles found containing the keyword '{keyword}'."
-    
-    # Format matching articles
-    results = []
-    for article in matching_articles:
-        results.append(f"""
-Title: {article.title}
-Published: {article.pub_date}
-Link: {article.link}
--------------------
-        """)
-    
-    return f"Found {len(matching_articles)} articles containing '{keyword}':\n" + "\n".join(results)
 
 @mcp.prompt()
 def generate_player_comparison(player1: str, player2: str) -> str:
