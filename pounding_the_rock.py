@@ -673,6 +673,119 @@ Location: {game.location}
     
     return f"Recent Spurs Game Results:\n{results_text}"
 
+@mcp.tool()
+async def search_articles(keyword: str) -> str:
+    """Search for articles containing a specific keyword.
+    
+    Args:
+        keyword: The keyword to search for in article titles and content
+    """
+    articles = await fetch_and_parse_rss()
+    
+    # Split multi-word keywords for better matching
+    keywords = keyword.lower().split()
+    
+    matching_articles = []
+    highlighted_snippets = {}
+    
+    for article in articles:
+        title = article.title or ""
+        content_raw = article.content if article.content else article.description or ""
+        
+        # Parse HTML content to get plain text
+        if content_raw:
+            soup = BeautifulSoup(content_raw, 'html.parser')
+            content = soup.get_text()
+        else:
+            content = ""
+        
+        combined_text = (title + " " + content).lower()
+        
+        # Check if all words in the keyword phrase are in the article
+        if len(keywords) > 1:
+            # For multi-word phrases, try exact matching first
+            if keyword.lower() in combined_text:
+                matching_articles.append(article)
+                
+                # Extract a snippet containing the keyword for context
+                keyword_index = combined_text.find(keyword.lower())
+                start = max(0, keyword_index - 100)
+                end = min(len(combined_text), keyword_index + len(keyword) + 100)
+                snippet = combined_text[start:end]
+                
+                # Add ellipses if we're not at the beginning or end
+                if start > 0:
+                    snippet = "..." + snippet
+                if end < len(combined_text):
+                    snippet = snippet + "..."
+                
+                highlighted_snippets[article.guid] = snippet.replace(
+                    keyword.lower(), 
+                    f"**{keyword.lower()}**"
+                )
+            
+            # If exact match fails, check if all words are present
+            elif all(word in combined_text for word in keywords):
+                matching_articles.append(article)
+                highlighted_snippets[article.guid] = "Multiple keyword matches found in article"
+        else:
+            # For single-word keywords, use word boundary search
+            pattern = rf'\b{re.escape(keyword)}\b'
+            if re.search(pattern, combined_text, re.IGNORECASE):
+                matching_articles.append(article)
+                
+                # Find all matches to extract the best snippet
+                matches = list(re.finditer(pattern, combined_text, re.IGNORECASE))
+                if matches:
+                    # Use the first match for the snippet
+                    match = matches[0]
+                    start = max(0, match.start() - 100)
+                    end = min(len(combined_text), match.end() + 100)
+                    snippet = combined_text[start:end]
+                    
+                    # Add ellipses if needed
+                    if start > 0:
+                        snippet = "..." + snippet
+                    if end < len(combined_text):
+                        snippet = snippet + "..."
+                    
+                    # Bold the keyword in the snippet
+                    pattern_with_case = re.compile(pattern, re.IGNORECASE)
+                    highlighted_snippets[article.guid] = pattern_with_case.sub(
+                        lambda m: f"**{m.group(0)}**", 
+                        snippet
+                    )
+                else:
+                    # Fallback if regex match worked but finditer failed
+                    highlighted_snippets[article.guid] = "Keyword found in article"
+    
+    if not matching_articles:
+        return f"No articles found containing the keyword '{keyword}'."
+    
+    # Sort articles by relevance (title matches first, then content matches)
+    def relevance_score(article):
+        # Articles with the keyword in the title get higher priority
+        title_match = keyword.lower() in article.title.lower()
+        # Count occurrences for secondary sorting
+        count = (article.title + (article.content or article.description or "")).lower().count(keyword.lower())
+        return (title_match, count)
+    
+    matching_articles.sort(key=relevance_score, reverse=True)
+    
+    # Format matching articles with snippets
+    results = []
+    for article in matching_articles:
+        snippet = highlighted_snippets.get(article.guid, "")
+        results.append(f"""
+Title: {article.title}
+Published: {article.pub_date}
+Link: {article.link}
+Snippet: {snippet}
+-------------------
+        """)
+    
+    return f"Found {len(matching_articles)} articles containing '{keyword}':\n" + "\n".join(results)
+
 @mcp.prompt()
 def generate_player_comparison(player1: str, player2: str) -> str:
     """Create a prompt to compare two Spurs players."""

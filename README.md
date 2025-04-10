@@ -1,6 +1,6 @@
 ## 📋 Overview
 
-This MCP server connects to the Pounding The Rock (PTR) RSS feed and provides AI assistants with access to the latest Spurs game results and blog posts.
+This MCP server connects to the [Pounding The Rock](https://www.poundingtherock.com/) RSS feed and provides AI assistants with access to the latest Spurs game results and blog posts.
 
 ## 🛠️ Installation Guide
 
@@ -109,11 +109,15 @@ Copy and paste the following JSON into the configuration file:
     </tr>
     <tr>
       <td><code>get_player_info(player_name)</code></td>
-      <td>Get latest stats and performance info for specific Spurs playe.r</td>
+      <td>Get latest stats for a specific Spurs player.</td>
     </tr>
     <tr>
       <td><code>get_recent_results</code></td>
       <td>Get latest scores and results.</td>
+    </tr>
+    <tr>
+      <td><code>search_articles</code></td>
+      <td>Search for keywords in the latest posts.</td>
     </tr>
     </table>
     </div>
@@ -125,6 +129,7 @@ Copy and paste the following JSON into the configuration file:
 
 - "Tell me how the Spurs did in their game last night"
 - "Can you tell how Stephon Castle performed the few games"
+- "What are some the key areas of focus for the Spurs for this upcoming offseason?"
 </details>
 
 ## 👥 Contributing
